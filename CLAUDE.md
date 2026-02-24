@@ -57,7 +57,7 @@ hyperbolic_herbarium/
 ## Implementation Phases (check off as completed)
 
 - [x] **Phase 0** — Skeleton: repo structure, stub files, pyproject.toml, basic pytest suite
-- [ ] **Phase 1** — Data pipeline: NAFlora-1M download, DwCA parsing, geographic filtering, capping/splits
+- [x] **Phase 1** — Data pipeline: NAFlora-1M metadata (JSON), DwCA parsing, geographic filtering, capping/splits
 - [ ] **Phase 2** — Taxonomy: TNRS resolution with SQLite caching, OpenTree patristic distances
 - [ ] **Phase 3** — Model: BioCLIP-2 + LoRA injection, hyperbolic projection, verify forward pass (norm < 1)
 - [ ] **Phase 4** — Training (global): smoke test on 10K specimens, 3 epochs

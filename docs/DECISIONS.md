@@ -117,3 +117,13 @@ Format: `DECISION-N | Status | Date | Choice | Rationale`
 **Trigger**: Switch to full patristic if genus+family graph is too sparse (< 5 edges per 50-candidate graph on average).
 
 **Config key**: `retrieval.graph_edge_mode` in `config/default.yaml`.
+
+---
+
+## DECISION-11 | DECIDED | 2026-02-23 | NAFlora-1M metadata is JSON from Kaggle
+
+**Question**: NAFlora-1M metadata as CSV (per original stub) vs actual dataset format?
+
+**Decision**: Parse **JSON** metadata. The dataset is distributed via Kaggle (herbarium-2022-fgvc9) as `train_metadata.json` and `test_metadata.json` (COCO-style: images, annotations, categories, genera). We map these to the canonical schema; `latitude`, `longitude`, `state_province` are null for NAFlora (not in the published JSON). Download supports either Kaggle API (optional) or user-placed JSON in the data dir.
+
+**Code**: `parse.parse_naflora_json()` and `parse.parse_naflora_csv()` accepts a path to a .json file or directory containing train/test metadata.

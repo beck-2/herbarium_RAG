@@ -14,10 +14,10 @@ build/
 venv/
 env/
 
-# Data — never commit raw data or bundles
-data/
-bundles/
-checkpoints/
+# Data — never commit raw data or bundles (top-level dirs only; src/data/ is code)
+/data/
+/bundles/
+/checkpoints/
 
 # Jupyter
 .ipynb_checkpoints/

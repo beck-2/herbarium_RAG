@@ -1,0 +1,16 @@
+{
+  "images": [
+    {"image_id": 1, "file_name": "train/1.jpg"},
+    {"image_id": 2, "file_name": "train/2.jpg"},
+    {"image_id": 3, "file_name": "train/3.jpg"}
+  ],
+  "annotations": [
+    {"image_id": 1, "category_id": 10},
+    {"image_id": 2, "category_id": 10},
+    {"image_id": 3, "category_id": 20}
+  ],
+  "categories": [
+    {"category_id": 10, "scientificName": "Quercus alba"},
+    {"category_id": 20, "scientificName": "Acer rubrum"}
+  ]
+}
