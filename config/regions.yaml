@@ -1,0 +1,113 @@
+# Hyperbolic Herbarium — Regional Bundle Definitions
+# DECISION-4: Using state-line bounding boxes for prototype.
+# Bounding boxes from SPEC §5.4. Switch to EPA Level III Ecoregion polygons
+# when data density analysis is available.
+
+regions:
+  california:
+    display_name: "California"
+    bbox:
+      lat_min: 32.5
+      lat_max: 42.0
+      lon_min: -124.5
+      lon_max: -114.1
+    primary_sources:
+      - naflora1m
+      - cch2            # training only — see DECISION-5
+    approx_specimens: 350000
+    approx_taxa: 6500
+    symbiota_portal: "https://cch2.org/portal/"
+    dwca_path: "data/raw/symbiota/cch2/"
+
+  pacific_northwest:
+    display_name: "Pacific Northwest"
+    bbox:
+      lat_min: 42.0
+      lat_max: 49.0
+      lon_min: -124.6
+      lon_max: -116.5
+    primary_sources:
+      - naflora1m
+      - cpnw
+    approx_specimens: 200000
+    approx_taxa: 5000
+    symbiota_portal: "https://www.pnwherbaria.org/portal/"
+    dwca_path: "data/raw/symbiota/cpnw/"
+
+  southwest:
+    display_name: "Southwest (AZ/NM)"
+    bbox:
+      lat_min: 31.3
+      lat_max: 37.0
+      lon_min: -114.8
+      lon_max: -103.0
+    primary_sources:
+      - naflora1m
+      - seinat
+    approx_specimens: 150000
+    approx_taxa: 4500
+    symbiota_portal: "https://swbiodiversity.org/seinet/portal/"
+    dwca_path: "data/raw/symbiota/seinat/"
+
+  southeast:
+    display_name: "Southeast"
+    bbox:
+      lat_min: 24.5
+      lat_max: 36.5
+      lon_min: -91.7
+      lon_max: -75.5
+    primary_sources:
+      - naflora1m
+      - sernec
+    approx_specimens: 275000
+    approx_taxa: 7000
+    symbiota_portal: "https://sernecportal.org/portal/"
+    dwca_path: "data/raw/symbiota/sernec/"
+
+  intermountain:
+    display_name: "Intermountain / Rockies"
+    bbox:
+      lat_min: 37.0
+      lat_max: 49.0
+      lon_min: -116.0
+      lon_max: -104.0
+    primary_sources:
+      - naflora1m
+      - irhn
+    approx_specimens: 115000
+    approx_taxa: 4000
+    symbiota_portal: "https://www.intermountainbiota.org/portal/"
+    dwca_path: "data/raw/symbiota/irhn/"
+
+  midwest:
+    display_name: "Midwest"
+    bbox:
+      lat_min: 36.0
+      lat_max: 49.0
+      lon_min: -104.0
+      lon_max: -82.0
+    primary_sources:
+      - naflora1m
+      - midwest_herbaria
+    approx_specimens: 200000
+    approx_taxa: 3500
+    symbiota_portal: null   # aggregated from multiple portals
+    dwca_path: "data/raw/symbiota/midwest/"
+
+  mid_atlantic:
+    display_name: "Mid-Atlantic / Northeast"
+    bbox:
+      lat_min: 36.5
+      lat_max: 45.0
+      lon_min: -80.5
+      lon_max: -71.0
+    primary_sources:
+      - naflora1m
+      - mahc
+    approx_specimens: 150000
+    approx_taxa: 4000
+    symbiota_portal: "https://maherbaria.org/portal/"
+    dwca_path: "data/raw/symbiota/mahc/"
+
+# Prototype region — start here in Phase 1
+prototype_region: california

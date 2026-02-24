@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data — never commit raw data or bundles
+data/
+bundles/
+checkpoints/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_metadata
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Weights & Biases
+wandb/
+
+# SQLite caches (large, generated)
+*.db
+
+# FAISS indexes (large, generated)
+*.bin
+*.index
+
+# Model weights (large, generated)
+*.pt
+*.pth
+*.safetensors
+*.bin
+
+# Logs
+*.log
+logs/

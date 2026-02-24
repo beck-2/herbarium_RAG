@@ -1,0 +1,90 @@
+# Hyperbolic Herbarium — Default Hyperparameters
+# All open design decisions are flagged with DECISION-N references.
+# Override per-experiment; do not edit defaults in place.
+
+model:
+  # DECISION-2: hyperbolic output dimension (512 default, alternatives: 128, 256)
+  hyperbolic_dim: 512
+  # DECISION-3: Poincaré ball curvature (fixed -1.0 default)
+  curvature: -1.0
+  learn_curvature: false
+  # DECISION-7: text fusion weight for habitat text (image weight = 1 - text_fusion_weight)
+  text_fusion_weight: 0.2
+  # Poincaré ball norm clip — NEVER exceed 0.99
+  norm_clip: 0.99
+
+lora:
+  # DECISION-6: LoRA rank (16 default, alternatives: 8, 32)
+  rank: 16
+  alpha: 32          # 2× rank per standard convention
+  dropout: 0.1
+  target_modules:
+    - q_proj
+    - v_proj
+    - out_proj
+
+training:
+  # Phase 1: global baseline
+  global_epochs: 15
+  global_batch_size: 64
+  global_lr: 2.0e-4
+  global_warmup_steps: 200
+  # Phase 2: regional LoRA
+  regional_epochs: 8
+  regional_batch_size: 64
+  regional_lr: 2.0e-4
+  regional_warmup_steps: 200
+  # Loss weights (α, β in L = L_hier + α·L_hyperbolic + β·L_taxonomy)
+  alpha_hyperbolic: 0.1
+  beta_taxonomy: 0.05
+  # Long-tail cap
+  max_images_per_taxon: 150
+  min_images_per_taxon: 5   # taxa below this excluded from classifier, kept in index
+  # Stratified split ratios
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  # Phylogenetic test holdout: fraction of genera reserved for open-set eval
+  open_set_genus_fraction: 0.10
+  # Hierarchical soft label smoothing: fraction distributed to sibling taxa
+  sibling_smoothing: 0.15
+
+retrieval:
+  # Top-k candidates from global FAISS search
+  global_top_k: 50
+  # Top-k from family sub-index (merged with global results)
+  family_top_k: 30
+  # Final result count
+  output_top_k: 10
+  # Confidence thresholds for re-retrieval gating
+  family_confidence_threshold: 0.65
+  genus_confidence_threshold: 0.55
+  # DECISION-9: number of clade-conditioned re-retrieval rounds (2 default)
+  n_reretrieval_rounds: 2
+  # DECISION-10: graph edge mode ('genus_family' default, alternative: 'full_patristic')
+  graph_edge_mode: genus_family
+  # Message-passing rounds in phylogenetic graph aggregation
+  graph_n_rounds: 2
+  # Score blending: self vs neighbor contribution
+  graph_self_weight: 0.7
+  graph_neighbor_weight: 0.3
+
+index:
+  # FAISS IVF-PQ parameters
+  n_clusters: 256        # for < 500K vectors
+  n_subquantizers: 32
+  bits_per_code: 8
+  nprobe: 32             # cells to visit at query time
+  nprobe_low_confidence: 64  # nprobe when classifier confidence is low
+
+evaluation:
+  # Targets from SPEC §10.1
+  target_precision_at_1: 0.70
+  target_precision_at_5: 0.85
+  target_family_accuracy: 0.95
+  target_genus_accuracy: 0.85
+  target_species_accuracy: 0.70
+  target_ece: 0.05
+  target_open_set_recall: 0.60
+  target_latency_s: 3.0
+  target_bundle_size_mb: 400

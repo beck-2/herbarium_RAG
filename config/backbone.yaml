@@ -1,0 +1,35 @@
+# Hyperbolic Herbarium — Backbone Configuration
+# DECISION-1: BioCLIP-2 (default) vs BioCLIP-1 (mobile budget variant).
+# Switch to bioclip1 profile if total bundle size > 500MB on target device.
+
+profiles:
+  bioclip2:
+    # Default: higher accuracy, larger model
+    model_id: "imageomics/bioclip-2"
+    arch: "ViT-L/14"
+    embed_dim: 768          # ViT-L/14 output dim (input to hyperbolic projection)
+    params_M: 307
+    size_fp32_mb: 1200
+    size_fp16_mb: 600
+    size_int8_mb: 300
+    lora_adapter_size_mb: 35   # rank-16, fp16
+    license: "MIT"
+    huggingface_id: "imageomics/bioclip-2"
+    notes: "Trained on TreeOfLife-200M (214M images, 952K taxa). +30.1% over CLIP."
+
+  bioclip1:
+    # Budget variant: smaller, faster, better for strict mobile storage
+    model_id: "imageomics/bioclip"
+    arch: "ViT-B/16"
+    embed_dim: 512          # ViT-B/16 output dim
+    params_M: 86
+    size_fp32_mb: 340
+    size_fp16_mb: 170
+    size_int8_mb: 86
+    lora_adapter_size_mb: 10   # rank-16, fp16 (ViT-B/16)
+    license: "MIT"
+    huggingface_id: "imageomics/bioclip"
+    notes: "Trained on TreeOfLife-10M. +17% over CLIP. ~3x faster LoRA training."
+
+# Active profile — change this to switch backbone globally
+active: bioclip2
