@@ -38,10 +38,6 @@ from __future__ import annotations
 import networkx as nx
 import numpy as np
 
-# TODO(phase6): implement build_retrieval_graph with genus_family edge mode
-# TODO(phase6): implement aggregate_scores message passing
-# TODO(phase6): add full_patristic edge mode using opentree_distances
-
 
 def build_retrieval_graph(
     candidates: list[dict],
@@ -51,15 +47,45 @@ def build_retrieval_graph(
     """Build a phylogenetic graph over retrieved candidates.
 
     Args:
-        candidates: List of candidate dicts (each has 'taxon', 'family', 'genus').
+        candidates: List of candidate dicts (each has 'family' and 'genus' keys).
         opentree_subtree: Subtree dict from bundle's opentree_subtree.json.
-        edge_mode: 'genus_family' (default) or 'full_patristic'.
+                          Used only in 'full_patristic' mode (not yet implemented).
+        edge_mode: 'genus_family' (default) — edges based on genus/family match.
+                   'full_patristic' — edges based on OTT patristic distances (deferred).
 
     Returns:
-        nx.Graph where nodes are candidate indices and edges have 'weight' attributes.
-        Genus-level LCA: weight=1.0. Family-level LCA: weight=0.3.
+        nx.Graph where nodes are candidate indices (0..N-1) and edges carry
+        'weight' attributes. Genus-level LCA: weight=1.0. Family-level: weight=0.3.
     """
-    raise NotImplementedError
+    n = len(candidates)
+    G = nx.Graph()
+    G.add_nodes_from(range(n))
+
+    if edge_mode == "genus_family":
+        for i in range(n):
+            for j in range(i + 1, n):
+                ci, cj = candidates[i], candidates[j]
+                if ci.get("genus") and cj.get("genus") and ci["genus"] == cj["genus"]:
+                    G.add_edge(i, j, weight=1.0)
+                elif ci.get("family") and cj.get("family") and ci["family"] == cj["family"]:
+                    G.add_edge(i, j, weight=0.3)
+    elif edge_mode == "full_patristic":
+        raise NotImplementedError(
+            "full_patristic edge mode requires OTT patristic distances. "
+            "Use genus_family (default) until Phase 7+ evaluation."
+        )
+    else:
+        raise ValueError(f"Unknown edge_mode '{edge_mode}'. Use 'genus_family'.")
+
+    return G
+
+
+def _initial_scores(candidates: list[dict]) -> np.ndarray:
+    """Convert FAISS L2 distances to similarity scores: 1 / (1 + d)."""
+    return np.array(
+        [1.0 / (1.0 + c["distance"]) for c in candidates],
+        dtype=np.float64,
+    )
 
 
 def aggregate_scores(
@@ -72,15 +98,35 @@ def aggregate_scores(
 ) -> np.ndarray:
     """Run message-passing score aggregation over the retrieval graph.
 
+    Initial scores are derived from FAISS L2 distances: score = 1 / (1 + d).
+    Each round smooths scores toward phylogenetically related neighbors.
+
     Args:
-        query_poincare: Query Poincaré point, shape (hyperbolic_dim,).
-        candidates: List of candidate dicts (each has 'poincare' embedding).
+        query_poincare: Query Poincaré point, shape (hyperbolic_dim,). Currently
+                        unused — scores are distance-based. Reserved for future
+                        geodesic-distance initialisation.
+        candidates: List of candidate dicts (each has 'distance').
         graph: nx.Graph from build_retrieval_graph.
-        n_rounds: Number of message-passing rounds.
-        self_weight: Weight for a candidate's own score.
-        neighbor_weight: Weight for neighbor score contribution.
+        n_rounds: Number of message-passing rounds (DECISION-9 default=2).
+        self_weight: Weight for candidate's own score each round.
+        neighbor_weight: Weight for neighbor contribution each round.
 
     Returns:
-        Updated scores array, shape (len(candidates),).
+        Updated scores array, shape (len(candidates),), higher = better match.
     """
-    raise NotImplementedError
+    scores = _initial_scores(candidates)
+
+    for _ in range(n_rounds):
+        new_scores = scores.copy()
+        for node in graph.nodes:
+            neighbors = list(graph[node])
+            if not neighbors:
+                continue
+            total_weight = sum(graph[node][nb]["weight"] for nb in neighbors)
+            neighbor_contrib = sum(
+                graph[node][nb]["weight"] * scores[nb] for nb in neighbors
+            ) / (total_weight + 1e-8)
+            new_scores[node] = self_weight * scores[node] + neighbor_weight * neighbor_contrib
+        scores = new_scores
+
+    return scores
