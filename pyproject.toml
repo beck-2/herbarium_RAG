@@ -59,6 +59,9 @@ include = ["src*"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+markers = [
+    "network: marks tests that require internet access (deselect with '-m not network')",
+]
 
 [tool.ruff]
 line-length = 100

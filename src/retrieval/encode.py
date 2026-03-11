@@ -24,7 +24,6 @@ From SPEC §8.1:
 from __future__ import annotations
 
 from PIL import Image
-import torch
 
 # TODO(phase6): implement full encode_query pipeline
 # TODO(phase6): implement text tokenization and fusion (DECISION-7 weighted average)
@@ -54,4 +53,5 @@ def encode_query(
             'genus_probs':   Tensor (1, n_genera) — softmax genus probabilities
             'species_probs': Tensor (1, n_species) — softmax species probabilities
     """
+    import torch  # lazy import — not required at module level
     raise NotImplementedError
