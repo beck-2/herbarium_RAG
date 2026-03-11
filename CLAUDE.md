@@ -60,7 +60,7 @@ hyperbolic_herbarium/
 - [x] **Phase 1** — Data pipeline: NAFlora-1M metadata (JSON), DwCA parsing, geographic filtering, capping/splits
 - [x] **Phase 2** — Taxonomy: TNRS resolution with SQLite caching, OpenTree patristic distances
 - [x] **Phase 3** — Model: BioCLIP-2 + LoRA injection, hyperbolic projection, verify forward pass (norm < 1)
-- [ ] **Phase 4** — Training (global): smoke test on 10K specimens, 3 epochs
+- [x] **Phase 4** — Training (global): smoke test on 10K specimens, 3 epochs
 - [ ] **Phase 5** — Index: FAISS IVF-PQ on 10K encodings, verify retrieval
 - [ ] **Phase 6** — Retrieval: full pipeline with graph aggregation, test on 10 queries
 - [ ] **Phase 7** — Evaluation: precision@k, mistake severity, calibration ECE
