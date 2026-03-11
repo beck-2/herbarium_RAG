@@ -1,0 +1,4 @@
+genus_id	institution_id	category_id	image_id	file_id	scientificName	family	genus	species	authors
+4	21	26	1	00026__001	Abutilon berlandieri A.Gray	Malvaceae	Abutilon	berlandieri	A.Gray
+4	36	26	2	00026__002	Abutilon berlandieri A.Gray	Malvaceae	Abutilon	berlandieri	A.Gray
+5	38	46	3	00046__001	Acaciella villosa (Sw.) Britton & Rose	Fabaceae	Acaciella	villosa	Britton & Rose

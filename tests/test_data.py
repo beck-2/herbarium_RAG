@@ -23,6 +23,7 @@ def test_parse_module_importable():
     assert hasattr(parse, "parse_dwca")
     assert hasattr(parse, "parse_naflora_csv")
     assert hasattr(parse, "parse_naflora_json")
+    assert hasattr(parse, "parse_naflora_tsv")
     assert hasattr(parse, "CANONICAL_COLUMNS")
 
 
@@ -64,6 +65,16 @@ def test_parse_naflora_csv_accepts_json_path():
     assert "scientific_name" in df.columns
 
 
+def test_parse_naflora_tsv_fixture():
+    from src.data import parse
+    path = str(FIXTURES_DIR / "naflora_mini_train.tsv")
+    df = parse.parse_naflora_tsv(path)
+    assert len(df) == 3
+    assert list(df.columns) == parse.CANONICAL_COLUMNS
+    assert df["occurrence_id"].tolist() == ["00026__001", "00026__002", "00046__001"]
+    assert "Abutilon berlandieri" in df["scientific_name"].iloc[0]
+
+
 def test_save_and_load_parquet(tmp_path):
     from src.data import parse
     path = str(FIXTURES_DIR / "naflora_mini.json")
@@ -72,6 +83,11 @@ def test_save_and_load_parquet(tmp_path):
     parse.save_parquet(df, str(out))
     assert out.exists()
     back = parse.load_parquet(str(out))
+    # Parquet roundtrip may change datetime resolution ([s]↔[ms]↔[us]).
+    # Cast datetime columns to a common resolution before comparing.
+    for col in df.select_dtypes(include="datetime").columns:
+        df[col] = df[col].astype("datetime64[ms]")
+        back[col] = back[col].astype("datetime64[ms]")
     pd.testing.assert_frame_equal(df, back)
 
 
@@ -118,7 +134,8 @@ def test_filter_by_region_bbox():
     df = pd.DataFrame({
         "occurrence_id": ["a", "b", "c"],
         "latitude": [36.0, 50.0, 35.0],
-        "longitude": [-120.0, -120.0, -100.0],
+        # b is too far north; c uses lon=-116 which is inside [-124.5, -114.1]
+        "longitude": [-120.0, -120.0, -116.0],
     })
     out = data_filter.filter_by_region(df, "california", regions_config)
     assert len(out) == 2

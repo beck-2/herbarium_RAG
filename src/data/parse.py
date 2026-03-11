@@ -104,12 +104,43 @@ def parse_naflora_json(json_path: str, source: str = "naflora1m") -> pd.DataFram
     return _ensure_canonical_columns(df)
 
 
-def parse_naflora_csv(csv_path: str) -> pd.DataFrame:
-    """Parse NAFlora-1M metadata; accepts .json (delegates to parse_naflora_json) or CSV.
+def parse_naflora_tsv(tsv_path: str, source: str = "naflora1m") -> pd.DataFrame:
+    """Parse NAFlora-mini TSV from GitHub (h22_miniv1_train.tsv / h22_miniv1_val.tsv).
+
+    One row per image. Header has 9 names but rows have 10 fields: the 5th is file_id
+    (e.g. 00026__001). Lat/lon and event_date are null. Use when you don't have Kaggle JSON.
 
     Args:
-        csv_path: Path to metadata file (.json or .csv). NAFlora-1M is distributed
-            as JSON from Kaggle; CSV is not provided by the dataset.
+        tsv_path: Path to a .tsv file.
+        source: Source label (default 'naflora1m').
+
+    Returns:
+        DataFrame with CANONICAL_COLUMNS.
+    """
+    df = pd.read_csv(tsv_path, sep="\t", dtype=str)
+    # GitHub header has 9 names but 10 fields: 5th is file_id (00026__001), 6th is scientificName
+    file_id = df.get("file_id", df.iloc[:, 4] if len(df.columns) > 4 else df["image_id"])
+    scientific_name = df["scientificName"] if "scientificName" in df.columns else (df.iloc[:, 5] if len(df.columns) > 5 else pd.Series(dtype=object))
+    out = pd.DataFrame({
+        "occurrence_id": file_id.astype(str),
+        "scientific_name": scientific_name.astype(str) if hasattr(scientific_name, "astype") else scientific_name,
+        "latitude": pd.NA,
+        "longitude": pd.NA,
+        "state_province": pd.NA,
+        "image_url": file_id.astype(str),
+        "reproductive_condition": pd.NA,
+        "source": source,
+        "region": pd.NA,
+        "event_date": pd.NaT,
+    })
+    return _ensure_canonical_columns(out)
+
+
+def parse_naflora_csv(csv_path: str) -> pd.DataFrame:
+    """Parse NAFlora-1M metadata; accepts .json (Kaggle), .tsv (GitHub NAFlora-mini), or path.
+
+    Args:
+        csv_path: Path to metadata file. .json → Kaggle COCO-style; .tsv → GitHub NAFlora-mini.
 
     Returns:
         DataFrame with CANONICAL_COLUMNS.
@@ -122,9 +153,11 @@ def parse_naflora_csv(csv_path: str) -> pd.DataFrame:
         "test_metadata.json",
     ):
         return parse_naflora_json(str(path))
+    if path.suffix.lower() == ".tsv":
+        return parse_naflora_tsv(str(path))
     raise NotImplementedError(
-        "NAFlora-1M metadata is JSON from Kaggle (herbarium-2022-fgvc9). "
-        "Use parse_naflora_json() or pass a .json path to parse_naflora_csv()."
+        "NAFlora metadata: use .json (Kaggle train_metadata.json) or .tsv (GitHub NAFlora-mini). "
+        "A JSON that only lists 'number of images per species' is not sufficient; we need per-image rows."
     )
 
 
@@ -181,8 +214,16 @@ def save_parquet(df: pd.DataFrame, output_path: str) -> None:
 
 
 def load_parquet(parquet_path: str) -> pd.DataFrame:
-    """Load a Parquet file into a DataFrame."""
+    """Load a Parquet file into a DataFrame.
+
+    Normalizes None → pd.NA in object-dtype columns to match the representation
+    used when building DataFrames (pyarrow converts pd.NA to null on write;
+    reading back yields Python None, which we normalize back to pd.NA).
+    """
     import pyarrow.parquet as pq
 
     table = pq.read_table(parquet_path)
-    return table.to_pandas()
+    df = table.to_pandas()
+    for col in df.select_dtypes(include=["object", "str"]).columns:
+        df[col] = df[col].where(df[col].notna(), other=pd.NA)
+    return df

@@ -126,7 +126,7 @@ PHASE 3: INDEX CONSTRUCTION
 | Long-tail profile | 7–100 images/taxon (capped in competition version) |
 | Download | github.com/dpl10/NAFlora-1M |
 
-For regional bundles, pull additional specimens from the corresponding Symbiota portal for regionally-dense coverage of rare endemics underrepresented in NAFlora-1M.
+For regional bundles, pull additional specimens from the corresponding Symbiota portal for regionally-dense coverage of rare endemics underrepresented in NAFlora-1M. Regional division (which specimens belong to which region) is done by **geographic filtering** on data that has coordinates—i.e. DwCA/Symbiota. NAFlora (Kaggle JSON) has no locality in the published metadata, so it is used only for the **global** Phase 1 training set; per-region training and index use the DwCA subset inside each region’s bbox (see DECISION-13).
 
 > ⚠️ **Design Decision #5**: CCH2 explicitly prohibits redistribution of raw data. Use NAFlora-1M for public bundles. Use CCH2 for training only. Seek legal clarity before app release.
 
@@ -588,7 +588,7 @@ dependencies = [
 Build in this order, validate at each step before proceeding:
 
 1. **Phase 0** — Skeleton: repo structure, stub files with TODO comments, pyproject.toml, pytest suite with one import test per module
-2. **Phase 1** — Data: NAFlora-1M metadata download (CSV first, not images), DwCA parsing, geographic filtering, capping/splits on 1K-specimen test subset
+2. **Phase 1** — Data: NAFlora-1M metadata download (JSON from Kaggle; spec previously said CSV but the released dataset is JSON), DwCA parsing, geographic filtering, capping/splits on 1K-specimen test subset
 3. **Phase 2** — Taxonomy: TNRS resolution with SQLite caching, OpenTree patristic distances, build `opentree_distances.db` for California subset
 4. **Phase 3** — Model: BioCLIP-2 loading, LoRA injection via `peft`, hyperbolic projection — verify forward pass produces Poincaré point with norm < 1
 5. **Phase 4** — Training: smoke test on 10K specimens, 3 epochs, log loss curves
