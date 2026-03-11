@@ -30,6 +30,9 @@ env/
 .vscode/
 .idea/
 
+# Claude Code IDE mirror files
+files/
+
 # Weights & Biases
 wandb/
 

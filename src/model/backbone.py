@@ -14,33 +14,48 @@ DECISION-1: BioCLIP-2 ViT-L/14 (default) vs BioCLIP-1 ViT-B/16.
 
 from __future__ import annotations
 
+import open_clip
 import torch
 import torch.nn as nn
-
-# TODO(phase3): implement backbone loading via open_clip.create_model_and_transforms
-# TODO(phase3): implement int8 quantization path for inference bundle export
-# TODO(phase3): expose embed_dim from backbone config (768 for ViT-L/14, 512 for ViT-B/16)
 
 
 def load_backbone(
     backbone_config: dict,
     device: str = "cpu",
     dtype: torch.dtype = torch.float16,
-) -> tuple[nn.Module, nn.Module, object]:
-    """Load image encoder, text encoder, and image preprocessor.
+) -> tuple[nn.Module, object, object]:
+    """Load image encoder, full CLIP model (for text encoding), and image preprocessor.
+
+    The image encoder (model.visual) is frozen immediately after loading.
+    Inject LoRA adapters via lora.inject_lora() before training.
 
     Args:
-        backbone_config: Single profile dict from backbone.yaml (e.g. the 'bioclip2' entry).
+        backbone_config: Single profile dict, e.g.:
+            {'model_id': 'hf-hub:imageomics/bioclip-2', 'embed_dim': 768}
         device: Target device ('cpu', 'cuda').
         dtype: Weight dtype (torch.float16 for training, torch.float32 for debug).
 
     Returns:
-        (image_encoder, text_encoder, preprocess_fn)
-        image_encoder: callable, input PIL image → (1, embed_dim) tensor
-        text_encoder:  callable, input token tensor → (1, embed_dim) tensor
-        preprocess_fn: torchvision transform for input images
+        (image_encoder, clip_model, preprocess_fn)
+        image_encoder: model.visual — nn.Module, input image tensor → (B, embed_dim).
+                       Frozen (no requires_grad). Wrap with inject_lora() for training.
+        clip_model:    Full open_clip CLIP model. Use clip_model.encode_text(tokens)
+                       for text embeddings.
+        preprocess_fn: Validation/inference torchvision transform (no random augments).
     """
-    raise NotImplementedError
+    model_id = backbone_config.get("model_id", "hf-hub:imageomics/bioclip-2")
+
+    # create_model_and_transforms returns (model, preprocess_train, preprocess_val)
+    clip_model, _preprocess_train, preprocess_val = open_clip.create_model_and_transforms(
+        model_id
+    )
+    clip_model = clip_model.to(device=device, dtype=dtype)
+    clip_model.eval()
+
+    image_encoder = clip_model.visual
+    freeze_backbone(image_encoder)
+
+    return image_encoder, clip_model, preprocess_val
 
 
 def freeze_backbone(image_encoder: nn.Module) -> None:

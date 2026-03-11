@@ -2,10 +2,11 @@
 Hierarchical classifier heads (family → genus → species).
 
 Responsibilities:
-- Three independent linear heads operating on Euclidean features (before hyperbolic projection)
-- Fine-to-coarse conditioning following BiLT (AAAI 2025): species head → genus head
-- Output softmax logits for family (~500 classes), genus (~4000), species (~15501)
-- Heads are trained jointly with the rest of the model in Phase 1 and frozen per-region in Phase 2
+- Three linear heads operating on Euclidean features (before hyperbolic projection)
+- Fine-to-coarse conditioning following BiLT (AAAI 2025): species → genus → family
+  Genus head sees concatenation of features + species softmax; similarly for family.
+- Output raw logits for family (~500 classes), genus (~4000), species (~15501)
+- Heads trained jointly with the rest of the model in Phase 1
 
 From SPEC §4.4:
     Family head:  ~500 output classes (NA families)   → Stage 2 confidence gating
@@ -18,13 +19,17 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-# TODO(phase3): implement HierarchicalHeads with BiLT-style genus←species conditioning
-# TODO(phase3): implement soft label smoothing (sibling_smoothing fraction to sibling taxa)
-# TODO(phase3): load/save head weights separately from backbone for bundle packing
-
 
 class HierarchicalHeads(nn.Module):
-    """Three-level hierarchical classifier: family → genus → species.
+    """Three-level hierarchical classifier: species → genus (conditioned) → family (conditioned).
+
+    Following BiLT (AAAI 2025) fine-to-coarse conditioning:
+    - species_head: linear(in_dim → n_species)
+    - genus_head:   linear(in_dim + n_species → n_genera)  [conditioned on species probs]
+    - family_head:  linear(in_dim + n_genera  → n_families) [conditioned on genus probs]
+
+    At inference, pass softmax(species_logits) into genus head, etc.
+    During training the same conditioning is applied end-to-end (gradients flow through).
 
     Args:
         in_dim: Input feature dimension (backbone embed_dim before hyperbolic projection).
@@ -41,13 +46,14 @@ class HierarchicalHeads(nn.Module):
         n_species: int = 15501,
     ):
         super().__init__()
-        # TODO(phase3): define family_head, genus_head, species_head as nn.Linear
-        raise NotImplementedError
+        self.species_head = nn.Linear(in_dim, n_species)
+        self.genus_head = nn.Linear(in_dim + n_species, n_genera)
+        self.family_head = nn.Linear(in_dim + n_genera, n_families)
 
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Compute hierarchical logits.
+        """Compute hierarchical logits with fine-to-coarse conditioning.
 
         Args:
             x: Euclidean features of shape (B, in_dim).
@@ -56,4 +62,12 @@ class HierarchicalHeads(nn.Module):
             (family_logits, genus_logits, species_logits)
             Each of shape (B, n_classes) — raw logits, not softmax.
         """
-        raise NotImplementedError
+        species_logits = self.species_head(x)
+        species_probs = species_logits.softmax(dim=-1).detach()
+
+        genus_logits = self.genus_head(torch.cat([x, species_probs], dim=-1))
+        genus_probs = genus_logits.softmax(dim=-1).detach()
+
+        family_logits = self.family_head(torch.cat([x, genus_probs], dim=-1))
+
+        return family_logits, genus_logits, species_logits

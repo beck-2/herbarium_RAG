@@ -142,6 +142,30 @@ Format: `DECISION-N | Status | Date | Choice | Rationale`
 
 ---
 
+## DECISION-15 | DECIDED | 2026-03-10 | LoRA target modules for BioCLIP-2
+
+**Question**: Which attention layers to target for LoRA in BioCLIP-2 ViT-L/14?
+
+**Discovery**: BioCLIP-2 (via open_clip) uses PyTorch `nn.MultiheadAttention` with a
+**fused QKV weight** (`in_proj_weight`), not separate `q_proj` / `v_proj` / `k_proj`
+linear layers. The spec's target list (`q_proj, v_proj, out_proj`) assumes HuggingFace
+transformer-style split projections, which do not exist in this model.
+
+**Decision**: Target `out_proj` (attention output), `c_fc` (MLP up-projection), and
+`c_proj` (MLP down-projection) — these are the actual `nn.Linear` layers in each of
+the 24 ViT-L/14 residual blocks.
+
+**Impact**:
+- Trainable LoRA parameters: ~4.7M (vs spec estimate of 30–45MB / ~15–23M for the
+  original q+v+out target list).
+- Adapter size in fp16: ~9.4MB per region (still well within the 35MB budget).
+- Coverage is similar: out_proj adapts attention mixing; c_fc/c_proj adapt the MLP.
+- The fused in_proj_weight (QKV) remains frozen — a reasonable trade-off.
+
+**Config key**: `lora.target_modules` in `config/default.yaml`.
+
+---
+
 ## DECISION-14 | OPEN | 2026-02-23 | We do not have any DwCA or NAFlora data on disk
 
 **DwCA**: The repo has **no** DwCA dataset. Code can *parse* DwCA (when you provide a path) and *try* to download from Symbiota portal URLs (`download_symbiota_dwca`). You must either run a DwCA export from a Symbiota portal (e.g. CCH2) and point the code at it, or obtain a DwCA from another source.
