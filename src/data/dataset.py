@@ -145,6 +145,45 @@ def streaming_collate_fn(batch):
     return images, fam, gen, spe
 
 
+class FeatureCacheDataset(Dataset):
+    """Loads pre-computed BioCLIP-2 features from disk — no images, no network.
+
+    This is the fast path for training after running scripts/precompute_features.py.
+    Features are loaded as a memory-mapped numpy array so only accessed rows are
+    read into RAM.
+
+    Args:
+        features_npy:   Path to features.npy   — float16 (N, embed_dim)
+        labels_npy:     Path to feature_labels.npy — int32 (N, 3) [fam, gen, spe]
+        ids_json:       Path to feature_ids.json — list of occurrence_ids
+        indices:        Optional subset of row indices (for train/val split).
+    """
+
+    def __init__(
+        self,
+        features_npy: str,
+        labels_npy: str,
+        ids_json: str,
+        indices: list[int] | None = None,
+    ):
+        import numpy as np
+        import json
+
+        self._features = np.load(features_npy, mmap_mode="r")
+        self._labels   = np.load(labels_npy,   mmap_mode="r")
+        self._ids      = json.loads(Path(ids_json).read_text())
+        self._indices  = list(range(len(self._ids))) if indices is None else indices
+
+    def __len__(self) -> int:
+        return len(self._indices)
+
+    def __getitem__(self, idx: int):
+        row = self._indices[idx]
+        feat = torch.from_numpy(self._features[row].astype("float32"))
+        fam, gen, spe = int(self._labels[row, 0]), int(self._labels[row, 1]), int(self._labels[row, 2])
+        return feat, torch.tensor(fam), torch.tensor(gen), torch.tensor(spe)
+
+
 class SpecimenDataset(Dataset):
     """Load real specimen images from disk with taxonomy labels from a parquet file.
 

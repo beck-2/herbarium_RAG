@@ -238,6 +238,9 @@ def parse_args() -> argparse.Namespace:
                    help="Path to manifest txt (overrides default train_5k.txt)")
     p.add_argument("--resume", default=None,
                    help="Path to checkpoint to resume from (e.g. checkpoints/global/best.pt)")
+    p.add_argument("--feature-cache", default=None,
+                   help="Dir with features.npy + feature_labels.npy + feature_ids.json "
+                        "(from scripts/precompute_features.py). Skips image streaming entirely.")
     p.add_argument("--smoke-test", action="store_true",
                    help="Use synthetic data (no images needed). Overrides --dataset.")
     p.add_argument("--smoke-n-samples", type=int, default=10_000)
@@ -265,7 +268,47 @@ def train(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    if args.smoke_test:
+    if args.feature_cache:
+        # Fast path: pre-computed features — no images, no network, no backbone
+        from src.data.dataset import FeatureCacheDataset
+
+        cache_dir = Path(args.feature_cache)
+        feat_npy  = str(cache_dir / "features.npy")
+        lab_npy   = str(cache_dir / "feature_labels.npy")
+        ids_json  = str(cache_dir / "feature_ids.json")
+
+        import json as _json
+        n_total = len(_json.loads(Path(ids_json).read_text()))
+        all_idx = list(range(n_total))
+
+        # 80/20 train/val split
+        import random as _random
+        _random.seed(42)
+        _random.shuffle(all_idx)
+        val_n   = max(256, n_total // 5)
+        val_idx = all_idx[:val_n]
+        trn_idx = all_idx[val_n:]
+
+        train_ds = FeatureCacheDataset(feat_npy, lab_npy, ids_json, indices=trn_idx)
+        val_ds   = FeatureCacheDataset(feat_npy, lab_npy, ids_json, indices=val_idx)
+
+        # Read label counts from the labels array
+        import numpy as np
+        labels = np.load(lab_npy, mmap_mode="r")
+        n_families = int(labels[:, 0].max()) + 1
+        n_genera   = int(labels[:, 1].max()) + 1
+        n_species  = int(labels[:, 2].max()) + 1
+        embed_dim  = int(np.load(feat_npy, mmap_mode="r").shape[1])
+        image_encoder = None  # features already computed
+
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=4, pin_memory=True)
+        val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
+                                  num_workers=4, pin_memory=True)
+        print(f"[feature-cache] {len(train_ds):,} train / {len(val_ds):,} val | "
+              f"embed_dim={embed_dim} | {n_families} fam / {n_genera} gen / {n_species} spe")
+
+    elif args.smoke_test:
         from src.data.dataset import SyntheticSpecimenDataset
         n_val = max(args.smoke_n_samples // 5, 32)
         train_ds = SyntheticSpecimenDataset(
@@ -370,12 +413,12 @@ def train(args: argparse.Namespace) -> None:
               f"{n_families} fam / {n_genera} gen / {n_species} spe")
 
     if args.smoke_test:
-        # Smoke path already has loaders set up above
+        # Smoke path: loaders for synthetic pre-encoded feature vectors (no backbone needed)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                                   num_workers=0, pin_memory=False)
         val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                                 num_workers=0, pin_memory=False)
-        image_encoder = None  # smoke-test uses pre-encoded feature vectors
+        image_encoder = None
 
     # ------------------------------------------------------------------
     # Model
