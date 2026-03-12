@@ -66,6 +66,85 @@ class SyntheticSpecimenDataset(Dataset):
         )
 
 
+class StreamingSpecimenDataset(Dataset):
+    """Streams specimen images directly from URLs — no disk writes.
+
+    Each __getitem__ call fetches the image over HTTP, applies the transform,
+    and discards the bytes.  Use this when you cannot pre-download all images.
+
+    For production training, prefer pre-downloading images to disk (faster I/O,
+    no network dependency per batch).  This dataset is ideal for the local 5K
+    proof-of-concept run and for Colab where images are fetched from CCH2 servers.
+
+    Args:
+        records:    List of dicts with keys: image_url, family_idx, genus_idx, species_idx.
+        transform:  torchvision transform applied to each PIL image.
+        timeout:    HTTP request timeout in seconds.
+        max_retries: Number of retry attempts per image.
+    """
+
+    def __init__(
+        self,
+        records: list[dict],
+        transform: Callable | None = None,
+        timeout: int = 15,
+        max_retries: int = 2,
+    ):
+        self.records = records
+        self.transform = transform
+        self.timeout = timeout
+        self.max_retries = max_retries
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(
+        self, idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None:
+        import io
+        import urllib.request
+        from PIL import Image
+
+        rec = self.records[idx]
+        url = rec["image_url"]
+
+        img = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "HyperbolicHerbarium/1.0"})
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    img = Image.open(io.BytesIO(resp.read())).convert("RGB")
+                break
+            except Exception:
+                if attempt == self.max_retries:
+                    return None  # Caller's collate_fn must filter None
+
+        if img is None:
+            return None
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        return (
+            img,
+            torch.tensor(rec["family_idx"], dtype=torch.long),
+            torch.tensor(rec["genus_idx"], dtype=torch.long),
+            torch.tensor(rec["species_idx"], dtype=torch.long),
+        )
+
+
+def streaming_collate_fn(batch):
+    """Collate function that drops None entries (failed image downloads)."""
+    batch = [b for b in batch if b is not None]
+    if not batch:
+        return None
+    images = torch.stack([b[0] for b in batch])
+    fam = torch.stack([b[1] for b in batch])
+    gen = torch.stack([b[2] for b in batch])
+    spe = torch.stack([b[3] for b in batch])
+    return images, fam, gen, spe
+
+
 class SpecimenDataset(Dataset):
     """Load real specimen images from disk with taxonomy labels from a parquet file.
 

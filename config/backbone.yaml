@@ -5,7 +5,7 @@
 profiles:
   bioclip2:
     # Default: higher accuracy, larger model
-    model_id: "imageomics/bioclip-2"
+    model_id: "hf-hub:imageomics/bioclip-2"
     arch: "ViT-L/14"
     embed_dim: 768          # ViT-L/14 output dim (input to hyperbolic projection)
     params_M: 307
@@ -19,7 +19,7 @@ profiles:
 
   bioclip1:
     # Budget variant: smaller, faster, better for strict mobile storage
-    model_id: "imageomics/bioclip"
+    model_id: "hf-hub:imageomics/bioclip"
     arch: "ViT-B/16"
     embed_dim: 512          # ViT-B/16 output dim
     params_M: 86

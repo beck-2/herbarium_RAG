@@ -98,6 +98,7 @@ def train_one_epoch(
     hyp_loss_fn,
     alpha: float,
     device: str,
+    backbone: nn.Module | None = None,
 ) -> float:
     from src.train.loss import combined_loss
 
@@ -106,13 +107,22 @@ def train_one_epoch(
     total_loss = 0.0
     steps = 0
 
-    for feats, fam_lbl, gen_lbl, spe_lbl in loader:
-        feats = feats.to(device)
+    for batch in loader:
+        if batch is None:
+            continue
+        images_or_feats, fam_lbl, gen_lbl, spe_lbl = batch
+        images_or_feats = images_or_feats.to(device)
         fam_lbl = fam_lbl.to(device)
         gen_lbl = gen_lbl.to(device)
         spe_lbl = spe_lbl.to(device)
 
         optimizer.zero_grad()
+        if backbone is not None:
+            with torch.no_grad():
+                feats = backbone(images_or_feats.to(next(backbone.parameters()).dtype))
+            feats = feats.to(torch.float32)
+        else:
+            feats = images_or_feats
         poincare = proj(feats)
         fam_logits, gen_logits, spe_logits = heads(feats)
 
@@ -144,6 +154,7 @@ def evaluate(
     hyp_loss_fn,
     alpha: float,
     device: str,
+    backbone: nn.Module | None = None,
 ) -> dict:
     from src.train.loss import combined_loss
 
@@ -152,12 +163,19 @@ def evaluate(
     total_loss = 0.0
     correct_fam = correct_gen = correct_spe = total = 0
 
-    for feats, fam_lbl, gen_lbl, spe_lbl in loader:
-        feats = feats.to(device)
+    for batch in loader:
+        if batch is None:
+            continue
+        images_or_feats, fam_lbl, gen_lbl, spe_lbl = batch
+        images_or_feats = images_or_feats.to(device)
         fam_lbl = fam_lbl.to(device)
         gen_lbl = gen_lbl.to(device)
         spe_lbl = spe_lbl.to(device)
 
+        if backbone is not None:
+            feats = backbone(images_or_feats.to(next(backbone.parameters()).dtype)).to(torch.float32)
+        else:
+            feats = images_or_feats
         poincare = proj(feats)
         fam_logits, gen_logits, spe_logits = heads(feats)
 
@@ -202,7 +220,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--patience", type=int, default=3,
                    help="Early stopping patience (epochs without val improvement)")
     p.add_argument("--output", default="checkpoints/global/")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="cpu", help="cpu | cuda | mps")
+    p.add_argument("--train-manifest", default=None,
+                   help="Path to manifest txt (overrides default train_5k.txt)")
+    p.add_argument("--resume", default=None,
+                   help="Path to checkpoint to resume from (e.g. checkpoints/global/best.pt)")
     p.add_argument("--smoke-test", action="store_true",
                    help="Use synthetic data (no images needed). Overrides --dataset.")
     p.add_argument("--smoke-n-samples", type=int, default=10_000)
@@ -255,17 +277,87 @@ def train(args: argparse.Namespace) -> None:
         embed_dim = args.embed_dim
         print(f"[smoke-test] {len(train_ds)} train / {len(val_ds)} val synthetic specimens")
     else:
-        # Real dataset path — backbone encodes images on the fly
-        # (requires downloaded NAFlora images; see DECISION-14)
-        raise NotImplementedError(
-            "Real dataset training not yet implemented. Use --smoke-test to run "
-            "the training loop on synthetic data."
+        # Real dataset: streaming images from CCH2 URLs via specimens_encoded.parquet
+        import pandas as pd
+        from src.data.dataset import StreamingSpecimenDataset, streaming_collate_fn
+        from src.data.label_encoder import load_label_encoders
+
+        dataset_dir = Path(args.dataset)
+        enc_parquet = dataset_dir / "specimens_encoded.parquet"
+        label_enc_path = dataset_dir / "label_encoders.json"
+        train_manifest = dataset_dir / "train_5k.txt"  # override with --train-manifest
+
+        if hasattr(args, "train_manifest") and args.train_manifest:
+            train_manifest = Path(args.train_manifest)
+
+        if not enc_parquet.exists():
+            raise FileNotFoundError(
+                f"{enc_parquet} not found. Run: python3.14 scripts/prepare_training_data.py"
+            )
+        if not label_enc_path.exists():
+            raise FileNotFoundError(
+                f"{label_enc_path} not found. Run: python3.14 scripts/prepare_training_data.py"
+            )
+        if not train_manifest.exists():
+            raise FileNotFoundError(
+                f"{train_manifest} not found. Run: python3.14 scripts/prepare_training_data.py"
+            )
+
+        encoders = load_label_encoders(str(label_enc_path))
+        n_families = len(encoders["family"])
+        n_genera   = len(encoders["genus"])
+        n_species  = len(encoders["scientific_name"])
+        embed_dim  = args.embed_dim
+
+        df = pd.read_parquet(str(enc_parquet))
+        manifest_ids = set(train_manifest.read_text().strip().splitlines())
+        train_df = df[df["occurrence_id"].isin(manifest_ids)].reset_index(drop=True)
+
+        # 80/20 split for val
+        val_n = max(64, len(train_df) // 5)
+        val_df = train_df.sample(val_n, random_state=42)
+        train_df = train_df[~train_df["occurrence_id"].isin(val_df["occurrence_id"])]
+
+        def _to_records(sub_df):
+            return sub_df[["image_url", "family_idx", "genus_idx", "species_idx"]].to_dict("records")
+
+        # Backbone for preprocessing transform
+        import yaml
+        backbone_config_path = Path(__file__).resolve().parent.parent.parent / "config" / "backbone.yaml"
+        with open(backbone_config_path) as f:
+            backbone_yaml = yaml.safe_load(f)
+        active = backbone_yaml.get("active", "bioclip2")
+        bb_cfg = backbone_yaml["profiles"][active]
+
+        # Load backbone (frozen) — used for encoding in training loop
+        from src.model.backbone import load_backbone
+        import torch as _torch
+        bb_dtype = _torch.float32 if device == "cpu" else _torch.float16
+        image_encoder, _clip_model, preprocess_fn = load_backbone(bb_cfg, device=device, dtype=bb_dtype)
+        image_encoder.eval()
+
+        train_ds = StreamingSpecimenDataset(_to_records(train_df), transform=preprocess_fn)
+        val_ds   = StreamingSpecimenDataset(_to_records(val_df),   transform=preprocess_fn)
+
+        train_loader = DataLoader(
+            train_ds, batch_size=args.batch_size, shuffle=True,
+            num_workers=2, collate_fn=streaming_collate_fn, pin_memory=False,
+        )
+        val_loader = DataLoader(
+            val_ds, batch_size=args.batch_size, shuffle=False,
+            num_workers=2, collate_fn=streaming_collate_fn, pin_memory=False,
         )
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              num_workers=0, pin_memory=False)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                            num_workers=0, pin_memory=False)
+        print(f"[real] train={len(train_ds)} val={len(val_ds)} | "
+              f"{n_families} fam / {n_genera} gen / {n_species} spe")
+
+    if args.smoke_test:
+        # Smoke path already has loaders set up above
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=0, pin_memory=False)
+        val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                                num_workers=0, pin_memory=False)
+        image_encoder = None  # smoke-test uses pre-encoded feature vectors
 
     # ------------------------------------------------------------------
     # Model
@@ -295,19 +387,40 @@ def train(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     best_val_loss = float("inf")
     patience_counter = 0
+    start_epoch = 1
     best_ckpt = os.path.join(args.output, "best.pt")
 
-    print(f"Training for up to {args.epochs} epochs on {device}.")
+    # ------------------------------------------------------------------
+    # Resume from checkpoint
+    # ------------------------------------------------------------------
+    if args.resume:
+        resume_path = args.resume
+        if not os.path.exists(resume_path):
+            # Also try inside --output dir
+            resume_path = os.path.join(args.output, args.resume)
+        if os.path.exists(resume_path):
+            meta = load_checkpoint(proj, heads, resume_path)
+            start_epoch = meta["epoch"] + 1
+            best_val_loss = meta["val_loss"]
+            print(f"Resumed from {resume_path} "
+                  f"(epoch {meta['epoch']}, val_loss={meta['val_loss']:.4f}). "
+                  f"Starting at epoch {start_epoch}.")
+        else:
+            print(f"Warning: --resume path not found: {resume_path}. Starting from scratch.")
+
+    print(f"Training for up to {args.epochs} epochs on {device} (start={start_epoch}).")
     print(f"  proj params: {sum(p.numel() for p in proj.parameters()):,}")
     print(f"  heads params: {sum(p.numel() for p in heads.parameters()):,}")
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         train_loss = train_one_epoch(
             proj, heads, train_loader, optimizer, scheduler,
             hier_loss_fn, hyp_loss_fn, args.alpha, device,
+            backbone=image_encoder,
         )
         val_metrics = evaluate(
             proj, heads, val_loader, hier_loss_fn, hyp_loss_fn, args.alpha, device,
+            backbone=image_encoder,
         )
         val_loss = val_metrics["val_loss"]
 
@@ -318,6 +431,10 @@ def train(args: argparse.Namespace) -> None:
             f"gen={val_metrics['genus_acc']:.3f} "
             f"spe={val_metrics['species_acc']:.3f}"
         )
+
+        # Always save last.pt so we can resume after any interruption
+        last_ckpt = os.path.join(args.output, "last.pt")
+        save_checkpoint(proj, heads, last_ckpt, epoch=epoch, val_loss=val_loss)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
