@@ -38,6 +38,7 @@ def parse_args():
     p.add_argument("--device",    default="cuda")
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--workers",   type=int, default=4)
+    p.add_argument("--limit",     type=int, default=None, help="Only encode first N specimens (for smoke tests)")
     return p.parse_args()
 
 
@@ -65,6 +66,8 @@ def main():
     if Path(args.manifest).exists():
         ids_in_manifest = set(Path(args.manifest).read_text().strip().splitlines())
         df = df[df["occurrence_id"].isin(ids_in_manifest)].reset_index(drop=True)
+    if args.limit:
+        df = df.head(args.limit)
     print(f"Specimens to encode: {len(df):,}")
 
     # Load backbone
