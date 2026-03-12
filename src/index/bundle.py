@@ -204,6 +204,80 @@ def create_specimens_db(df, output_db_path: str) -> None:
         conn.close()
 
 
+def load_bundle(bundle_dir: str):
+    """Load a packed regional bundle from disk and return a Bundle for retrieval.
+
+    Reads:
+        faiss_global.bin          → global_index
+        faiss_families/*.bin      → family_indexes (filename stem = family name)
+        specimens.db              → specimen_ids (rowid order), specimens_metadata,
+                                    family_specimen_ids (reconstructed from rowid order)
+        opentree_subtree.json     → opentree_subtree
+
+    The family_specimen_ids order is reconstructed from specimens.db rowid order,
+    which matches the order embeddings were added during index construction.
+
+    Returns:
+        retrieval.search.Bundle ready for retrieve().
+    """
+    import faiss
+
+    from src.retrieval.search import Bundle
+
+    bundle_path = Path(bundle_dir)
+
+    # --- Global index ---
+    global_index = faiss.read_index(str(bundle_path / "faiss_global.bin"))
+
+    # --- Family sub-indexes ---
+    family_indexes: dict[str, object] = {}
+    families_dir = bundle_path / "faiss_families"
+    if families_dir.exists():
+        for index_file in sorted(families_dir.glob("*.bin")):
+            family_name = index_file.stem
+            family_indexes[family_name] = faiss.read_index(str(index_file))
+
+    # --- Specimens metadata (from SQLite, ordered by rowid) ---
+    db_path = bundle_path / "specimens.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        rows = conn.execute(
+            "SELECT occurrence_id, family, genus, scientific_name FROM specimens ORDER BY rowid"
+        ).fetchall()
+
+    specimen_ids: list[str] = [row[0] for row in rows]
+    specimens_metadata: dict[str, dict] = {
+        row[0]: {
+            "family": row[1] or "",
+            "genus":  row[2] or "",
+            "taxon":  row[3] or "",
+        }
+        for row in rows
+    }
+
+    # Reconstruct family_specimen_ids in rowid order (matches index construction order)
+    family_specimen_ids: dict[str, list[str]] = {}
+    for occ_id, family, *_ in rows:
+        if family:
+            family_specimen_ids.setdefault(family, []).append(occ_id)
+
+    # --- OpenTree subtree ---
+    subtree_path = bundle_path / "opentree_subtree.json"
+    if subtree_path.exists():
+        with open(subtree_path, encoding="utf-8") as f:
+            opentree_subtree = json.load(f)
+    else:
+        opentree_subtree = {}
+
+    return Bundle(
+        global_index=global_index,
+        family_indexes=family_indexes,
+        specimen_ids=specimen_ids,
+        family_specimen_ids=family_specimen_ids,
+        opentree_subtree=opentree_subtree,
+        specimens_metadata=specimens_metadata,
+    )
+
+
 def check_bundle_size(bundle_dir: str, warn_threshold_mb: float = 400.0) -> float:
     """Compute total bundle size in MB. Warns if > warn_threshold_mb.
 

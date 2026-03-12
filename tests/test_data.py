@@ -203,3 +203,67 @@ def test_write_split_manifests(tmp_path):
     assert (tmp_path / "train.txt").read_text().strip().split() == ["1", "2"]
     assert (tmp_path / "val.txt").read_text().strip() == "3"
     assert (tmp_path / "test.txt").read_text().strip() == "4"
+
+
+# --- Phase 8: parse_dwca real data ---
+
+SPIF_DIR = Path(__file__).resolve().parent.parent / "data" / "raw" / "symbiota" / "cch2" / "SPIF"
+
+
+def test_canonical_columns_include_family_genus():
+    """family and genus must be in CANONICAL_COLUMNS for DwCA and bundle metadata."""
+    from src.data.parse import CANONICAL_COLUMNS
+    assert "family" in CANONICAL_COLUMNS
+    assert "genus" in CANONICAL_COLUMNS
+
+
+def test_parse_naflora_tsv_has_family_genus():
+    """NAFlora-mini TSV has family and genus columns — they should be parsed."""
+    from src.data import parse
+    path = str(FIXTURES_DIR / "naflora_mini_train.tsv")
+    df = parse.parse_naflora_tsv(path)
+    assert "family" in df.columns
+    assert "genus" in df.columns
+    # The fixture has Malvaceae rows
+    assert df["family"].iloc[0] == "Malvaceae"
+    assert df["genus"].iloc[0] == "Abutilon"
+
+
+@pytest.mark.skipif(not SPIF_DIR.exists(), reason="CCH2 SPIF collection not downloaded")
+def test_parse_dwca_spif_schema():
+    """Parsing a real CCH2 DwCA dir produces the canonical schema with family/genus."""
+    from src.data.parse import parse_dwca, CANONICAL_COLUMNS
+    df = parse_dwca(str(SPIF_DIR), "cch2")
+    assert list(df.columns) == CANONICAL_COLUMNS
+    assert len(df) > 0
+
+
+@pytest.mark.skipif(not SPIF_DIR.exists(), reason="CCH2 SPIF collection not downloaded")
+def test_parse_dwca_spif_has_family_genus():
+    """DwCA parse populates family and genus from occurrences.csv columns."""
+    from src.data.parse import parse_dwca
+    df = parse_dwca(str(SPIF_DIR), "cch2")
+    assert df["family"].notna().any(), "Expected non-null family values"
+    assert df["genus"].notna().any(), "Expected non-null genus values"
+
+
+@pytest.mark.skipif(not SPIF_DIR.exists(), reason="CCH2 SPIF collection not downloaded")
+def test_parse_dwca_spif_has_image_urls():
+    """DwCA parse joins multimedia.csv to produce image_url from accessURI."""
+    from src.data.parse import parse_dwca
+    df = parse_dwca(str(SPIF_DIR), "cch2")
+    assert df["image_url"].notna().any(), "Expected at least some image URLs from multimedia.csv"
+    # Image URLs should look like real URLs
+    sample = df["image_url"].dropna().iloc[0]
+    assert sample.startswith("http"), f"Expected URL, got: {sample!r}"
+
+
+@pytest.mark.skipif(not SPIF_DIR.exists(), reason="CCH2 SPIF collection not downloaded")
+def test_parse_dwca_spif_coordinates():
+    """DwCA parse populates lat/lon as float from decimalLatitude/decimalLongitude."""
+    from src.data.parse import parse_dwca
+    df = parse_dwca(str(SPIF_DIR), "cch2")
+    has_coords = df["latitude"].notna()
+    assert has_coords.any(), "Expected some records with coordinates"
+    assert df.loc[has_coords, "latitude"].dtype.kind == "f"
+    assert df.loc[has_coords, "longitude"].dtype.kind == "f"

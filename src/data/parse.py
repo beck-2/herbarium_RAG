@@ -29,6 +29,8 @@ except ImportError:
 CANONICAL_COLUMNS = [
     "occurrence_id",
     "scientific_name",
+    "family",
+    "genus",
     "latitude",
     "longitude",
     "state_province",
@@ -91,6 +93,8 @@ def parse_naflora_json(json_path: str, source: str = "naflora1m") -> pd.DataFram
             rows.append({
                 "occurrence_id": str(image_id),
                 "scientific_name": scientific_name,
+                "family": cat.get("family", pd.NA),
+                "genus": cat.get("genus", pd.NA),
                 "latitude": pd.NA,
                 "longitude": pd.NA,
                 "state_province": pd.NA,
@@ -121,9 +125,13 @@ def parse_naflora_tsv(tsv_path: str, source: str = "naflora1m") -> pd.DataFrame:
     # GitHub header has 9 names but 10 fields: 5th is file_id (00026__001), 6th is scientificName
     file_id = df.get("file_id", df.iloc[:, 4] if len(df.columns) > 4 else df["image_id"])
     scientific_name = df["scientificName"] if "scientificName" in df.columns else (df.iloc[:, 5] if len(df.columns) > 5 else pd.Series(dtype=object))
+    family = df["family"] if "family" in df.columns else pd.NA
+    genus = df["genus"] if "genus" in df.columns else pd.NA
     out = pd.DataFrame({
         "occurrence_id": file_id.astype(str),
         "scientific_name": scientific_name.astype(str) if hasattr(scientific_name, "astype") else scientific_name,
+        "family": family,
+        "genus": genus,
         "latitude": pd.NA,
         "longitude": pd.NA,
         "state_province": pd.NA,
@@ -164,32 +172,40 @@ def parse_naflora_csv(csv_path: str) -> pd.DataFrame:
 def parse_dwca(dwca_dir: str, source_name: str) -> pd.DataFrame:
     """Parse a DwCA directory or archive into the canonical DataFrame schema.
 
+    For extracted directories (containing occurrences.csv + meta.xml), reads
+    files directly and joins multimedia.csv for image URLs.  Falls back to
+    DwCAReader for zip archives.
+
     Args:
-        dwca_dir: Path to DwCA (zip or extracted directory with meta.xml + core).
+        dwca_dir: Path to extracted DwCA directory or .zip archive.
         source_name: Source identifier (e.g. 'cch2', 'sernec').
 
     Returns:
         DataFrame with CANONICAL_COLUMNS.
     """
+    path = Path(os.path.abspath(dwca_dir))
+    if path.is_dir() and (path / "occurrences.csv").exists():
+        return _parse_dwca_dir(str(path), source_name)
+
+    # Fallback: DwCAReader for zip archives
     if DwCAReader is None:
         raise ImportError(
             "DwCA parsing requires the data extra: pip install 'hyperbolic-herbarium[data]'"
         )
-    dwca_path = os.path.abspath(dwca_dir)
-    with DwCAReader(dwca_path) as dwca:
-        core_location = dwca.core_file_location
-        core_df = dwca.pd_read(core_location, parse_dates=True)
+    with DwCAReader(str(path)) as dwca:
+        core_df = dwca.pd_read(dwca.core_file_location, parse_dates=True)
 
-    # Map Darwin Core columns (short names) to canonical; prefer standard terms
     canonical_to_dc = [
         ("occurrence_id", ["occurrenceID", "id"]),
         ("scientific_name", ["scientificName"]),
-        ("latitude", ["decimalLatitude"]),
-        ("longitude", ["decimalLongitude"]),
+        ("family",         ["family"]),
+        ("genus",          ["genus"]),
+        ("latitude",       ["decimalLatitude"]),
+        ("longitude",      ["decimalLongitude"]),
         ("state_province", ["stateProvince"]),
-        ("image_url", ["imageURL", "associatedMedia"]),
+        ("image_url",      ["imageURL", "associatedMedia"]),
         ("reproductive_condition", ["reproductiveCondition"]),
-        ("event_date", ["eventDate"]),
+        ("event_date",     ["eventDate"]),
     ]
     rename = {}
     for canon, candidates in canonical_to_dc:
@@ -201,6 +217,65 @@ def parse_dwca(dwca_dir: str, source_name: str) -> pd.DataFrame:
     core_df["source"] = source_name
     core_df["region"] = pd.NA
     return _ensure_canonical_columns(core_df)
+
+
+def _parse_dwca_dir(dwca_dir: str, source_name: str) -> pd.DataFrame:
+    """Fast path: read extracted DwCA directory directly with pandas.
+
+    Reads occurrences.csv, joins multimedia.csv (first image per occurrence),
+    maps Darwin Core column names to the canonical schema.
+    """
+    path = Path(dwca_dir)
+
+    occ_df = pd.read_csv(path / "occurrences.csv", low_memory=False, dtype=str)
+
+    # Join multimedia.csv for image URLs (first image per occurrence)
+    media_path = path / "multimedia.csv"
+    if media_path.exists():
+        media_df = pd.read_csv(
+            media_path, low_memory=False,
+            usecols=["coreid", "accessURI"], dtype=str,
+        )
+        media_first = (
+            media_df.dropna(subset=["accessURI"])
+            .drop_duplicates(subset=["coreid"])
+            [["coreid", "accessURI"]]
+        )
+        occ_df = occ_df.merge(media_first, left_on="id", right_on="coreid", how="left")
+        occ_df["image_url"] = occ_df["accessURI"]
+    else:
+        occ_df["image_url"] = pd.NA
+
+    # Darwin Core → canonical column rename
+    dc_rename = {
+        "occurrenceID":         "occurrence_id",
+        "scientificName":       "scientific_name",
+        "family":               "family",
+        "genus":                "genus",
+        "decimalLatitude":      "latitude",
+        "decimalLongitude":     "longitude",
+        "stateProvince":        "state_province",
+        "reproductiveCondition": "reproductive_condition",
+        "eventDate":            "event_date",
+    }
+    occ_df = occ_df.rename(columns={k: v for k, v in dc_rename.items() if k in occ_df.columns})
+
+    # Fall back to 'id' for occurrence_id if occurrenceID was absent
+    if "occurrence_id" not in occ_df.columns and "id" in occ_df.columns:
+        occ_df = occ_df.rename(columns={"id": "occurrence_id"})
+
+    # Coerce lat/lon to float
+    for col in ("latitude", "longitude"):
+        if col in occ_df.columns:
+            occ_df[col] = pd.to_numeric(occ_df[col], errors="coerce")
+
+    # Coerce event_date to datetime
+    if "event_date" in occ_df.columns:
+        occ_df["event_date"] = pd.to_datetime(occ_df["event_date"], errors="coerce")
+
+    occ_df["source"] = source_name
+    occ_df["region"] = pd.NA
+    return _ensure_canonical_columns(occ_df)
 
 
 def save_parquet(df: pd.DataFrame, output_path: str) -> None:
