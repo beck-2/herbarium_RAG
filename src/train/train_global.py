@@ -352,8 +352,8 @@ def train(args: argparse.Namespace) -> None:
         train_ds = StreamingSpecimenDataset(_to_records(train_df), transform=preprocess_fn)
         val_ds   = StreamingSpecimenDataset(_to_records(val_df),   transform=preprocess_fn)
 
-        # Use many workers — bottleneck is network I/O, not CPU
-        n_workers = min(32, os.cpu_count() * 4 or 16)
+        # 4 workers balances parallel downloads vs process overhead on Colab (2 CPUs)
+        n_workers = min(4, os.cpu_count() or 2)
         train_loader = DataLoader(
             train_ds, batch_size=args.batch_size, shuffle=True,
             num_workers=n_workers, collate_fn=streaming_collate_fn,
@@ -361,7 +361,7 @@ def train(args: argparse.Namespace) -> None:
         )
         val_loader = DataLoader(
             val_ds, batch_size=args.batch_size, shuffle=False,
-            num_workers=max(4, n_workers // 2), collate_fn=streaming_collate_fn,
+            num_workers=n_workers, collate_fn=streaming_collate_fn,
             pin_memory=False, prefetch_factor=2, persistent_workers=True,
         )
         print(f"  DataLoader: {n_workers} workers for parallel image streaming")
