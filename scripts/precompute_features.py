@@ -15,15 +15,18 @@ Usage (Colab):
         --parquet data/processed/regions/california/specimens_encoded.parquet \\
         --manifest data/processed/regions/california/train_full.txt \\
         --output /content/drive/MyDrive/hyperbolic_herbarium/features/ \\
-        --device cuda --batch-size 128
+        --device cuda --batch-size 256 --download-threads 64
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,10 +39,25 @@ def parse_args():
     p.add_argument("--manifest",  default="data/processed/regions/california/train_full.txt")
     p.add_argument("--output",    default="data/processed/regions/california/features/")
     p.add_argument("--device",    default="cuda")
-    p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--workers",   type=int, default=2)
+    p.add_argument("--batch-size", type=int, default=256)
+    p.add_argument("--download-threads", type=int, default=64,
+                   help="Concurrent image download threads per batch")
+    p.add_argument("--timeout",   type=int, default=15)
     p.add_argument("--limit",     type=int, default=None, help="Only encode first N specimens (for smoke tests)")
     return p.parse_args()
+
+
+def fetch_image(args_tuple):
+    """Download one image and return (idx, tensor) or (idx, None) on failure."""
+    idx, url, transform, timeout = args_tuple
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "HyperbolicHerbarium/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            from PIL import Image
+            img = Image.open(io.BytesIO(resp.read())).convert("RGB")
+        return idx, transform(img)
+    except Exception:
+        return idx, None
 
 
 def main():
@@ -48,7 +66,6 @@ def main():
     import torch
     import yaml
 
-    from src.data.dataset import StreamingSpecimenDataset, streaming_collate_fn
     from src.model.backbone import load_backbone
 
     args = parse_args()
@@ -83,56 +100,68 @@ def main():
     image_encoder, _, preprocess_fn = load_backbone(bb_cfg, device=device, dtype=bb_dtype)
     image_encoder.eval()
     print(f"Backbone loaded on {device} (embed_dim={embed_dim})")
+    print(f"Download threads: {args.download_threads} | Batch size: {args.batch_size}")
 
-    # Dataset: stream images, no labels needed here
     records = df[["image_url", "family_idx", "genus_idx", "species_idx"]].to_dict("records")
-    ds = StreamingSpecimenDataset(records, transform=preprocess_fn)
-    loader = torch.utils.data.DataLoader(
-        ds, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, collate_fn=streaming_collate_fn,
-        pin_memory=False, prefetch_factor=2, persistent_workers=args.workers > 0,
-    )
+    occurrence_ids = df["occurrence_id"].tolist()
+    n = len(records)
 
     # Pre-allocate output arrays
-    all_features = np.zeros((len(df), embed_dim), dtype=np.float16)
-    all_labels   = np.zeros((len(df), 3), dtype=np.int32)
-    occurrence_ids = df["occurrence_id"].tolist()
+    all_features = np.zeros((n, embed_dim), dtype=np.float16)
+    all_labels   = np.zeros((n, 3), dtype=np.int32)
 
     row = 0
-    t0 = time.time()
     skipped = 0
+    t0 = time.time()
 
-    with torch.no_grad():
-        for batch_idx, batch in enumerate(loader):
-            if batch is None:
-                skipped += args.batch_size
+    with ThreadPoolExecutor(max_workers=args.download_threads) as pool:
+        for batch_start in range(0, n, args.batch_size):
+            batch_records = records[batch_start: batch_start + args.batch_size]
+
+            # Download batch in parallel
+            tasks = [
+                (i, rec["image_url"], preprocess_fn, args.timeout)
+                for i, rec in enumerate(batch_records)
+            ]
+            results = [None] * len(batch_records)
+            for future in pool.map(fetch_image, tasks):
+                i, tensor = future
+                results[i] = tensor
+
+            # Filter failures and build GPU batch
+            valid_indices = [i for i, t in enumerate(results) if t is not None]
+            skipped += len(batch_records) - len(valid_indices)
+
+            if not valid_indices:
                 continue
-            images, fam, gen, spe = batch
-            images = images.to(device, dtype=bb_dtype)
-            feats = image_encoder(images).to(torch.float16).cpu().numpy()
+
+            images = torch.stack([results[i] for i in valid_indices]).to(device, dtype=bb_dtype)
+            with torch.no_grad():
+                feats = image_encoder(images).to(torch.float16).cpu().numpy()
 
             bs = feats.shape[0]
             all_features[row:row + bs] = feats
-            all_labels[row:row + bs, 0] = fam.numpy()
-            all_labels[row:row + bs, 1] = gen.numpy()
-            all_labels[row:row + bs, 2] = spe.numpy()
+            for j, src_i in enumerate(valid_indices):
+                rec = batch_records[src_i]
+                all_labels[row + j, 0] = rec["family_idx"]
+                all_labels[row + j, 1] = rec["genus_idx"]
+                all_labels[row + j, 2] = rec["species_idx"]
             row += bs
 
-            if (batch_idx + 1) % 50 == 0:
-                elapsed = time.time() - t0
-                rate = row / elapsed
-                remaining = (len(df) - row) / max(rate, 1)
-                print(f"  [{row:,}/{len(df):,}] {rate:.0f} img/s | "
-                      f"~{remaining/60:.0f} min remaining"
-                      f"{f' | skipped~{skipped}' if skipped else ''}",
-                      flush=True)
+            # Progress every batch
+            elapsed = time.time() - t0
+            rate = row / elapsed
+            remaining = (n - row) / max(rate, 1)
+            print(f"  [{row:,}/{n:,}] {rate:.0f} img/s | "
+                  f"~{remaining/60:.0f} min remaining"
+                  f"{f' | skipped={skipped}' if skipped else ''}",
+                  flush=True)
 
-    # Trim to actual rows encoded (some may have been skipped)
+    # Trim
     all_features = all_features[:row]
     all_labels   = all_labels[:row]
     occurrence_ids = occurrence_ids[:row]
 
-    # Save
     np.save(str(out_dir / "features.npy"), all_features)
     np.save(str(out_dir / "feature_labels.npy"), all_labels)
     (out_dir / "feature_ids.json").write_text(json.dumps(occurrence_ids))
