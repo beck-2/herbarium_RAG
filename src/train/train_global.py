@@ -110,9 +110,12 @@ def train_one_epoch(
     heads.train()
     total_loss = 0.0
     steps = 0
+    skipped = 0
+    log_every = 50  # print progress every N batches
 
-    for batch in loader:
+    for batch_idx, batch in enumerate(loader):
         if batch is None:
+            skipped += 1
             continue
         images_or_feats, fam_lbl, gen_lbl, spe_lbl = batch
         images_or_feats = images_or_feats.to(device)
@@ -145,6 +148,12 @@ def train_one_epoch(
 
         total_loss += loss.item()
         steps += 1
+
+        if steps % log_every == 0:
+            n_total = len(loader)
+            print(f"    step {steps}/{n_total} | loss={total_loss/steps:.4f}"
+                  f"{f' | skipped={skipped}' if skipped else ''}",
+                  flush=True)
 
     return total_loss / max(steps, 1)
 
@@ -343,14 +352,19 @@ def train(args: argparse.Namespace) -> None:
         train_ds = StreamingSpecimenDataset(_to_records(train_df), transform=preprocess_fn)
         val_ds   = StreamingSpecimenDataset(_to_records(val_df),   transform=preprocess_fn)
 
+        # Use many workers — bottleneck is network I/O, not CPU
+        n_workers = min(32, os.cpu_count() * 4 or 16)
         train_loader = DataLoader(
             train_ds, batch_size=args.batch_size, shuffle=True,
-            num_workers=2, collate_fn=streaming_collate_fn, pin_memory=False,
+            num_workers=n_workers, collate_fn=streaming_collate_fn,
+            pin_memory=False, prefetch_factor=2, persistent_workers=True,
         )
         val_loader = DataLoader(
             val_ds, batch_size=args.batch_size, shuffle=False,
-            num_workers=2, collate_fn=streaming_collate_fn, pin_memory=False,
+            num_workers=max(4, n_workers // 2), collate_fn=streaming_collate_fn,
+            pin_memory=False, prefetch_factor=2, persistent_workers=True,
         )
+        print(f"  DataLoader: {n_workers} workers for parallel image streaming")
 
         print(f"[real] train={len(train_ds)} val={len(val_ds)} | "
               f"{n_families} fam / {n_genera} gen / {n_species} spe")
