@@ -37,7 +37,7 @@ def parse_args():
     p.add_argument("--output",    default="data/processed/regions/california/features/")
     p.add_argument("--device",    default="cuda")
     p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--workers",   type=int, default=4)
+    p.add_argument("--workers",   type=int, default=2)
     p.add_argument("--limit",     type=int, default=None, help="Only encode first N specimens (for smoke tests)")
     return p.parse_args()
 
@@ -90,7 +90,7 @@ def main():
     loader = torch.utils.data.DataLoader(
         ds, batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, collate_fn=streaming_collate_fn,
-        pin_memory=False, prefetch_factor=2, persistent_workers=True,
+        pin_memory=False, prefetch_factor=2, persistent_workers=args.workers > 0,
     )
 
     # Pre-allocate output arrays
