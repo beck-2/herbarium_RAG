@@ -193,6 +193,12 @@ def create_specimens_db(df, output_db_path: str) -> None:
     for col in out_df.select_dtypes(include=["object", "str"]).columns:
         out_df[col] = out_df[col].where(out_df[col].notna(), other=None)
 
+    # Coerce event_date to string (avoids year=0 issues with pandas→SQLite datetime)
+    if "event_date" in out_df.columns:
+        out_df["event_date"] = out_df["event_date"].astype(str).where(
+            out_df["event_date"].notna(), other=None
+        )
+
     conn = sqlite3.connect(output_db_path)
     try:
         out_df.to_sql("specimens", conn, if_exists="replace", index=False)
